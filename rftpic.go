@@ -3,10 +3,11 @@ package rftpic
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 
 	utils "github.com/rojbar/rftpiu"
 )
@@ -20,8 +21,27 @@ import (
 	6. inform end user all ok
 **/
 func SendFile(port string, domain string, channel string, filePath string) error {
+	file, errO := os.Open(filePath)
+	if errO != nil {
+		return errO
+	}
+	defer file.Close()
+
+	fileInfo, errFS := file.Stat()
+	if errFS != nil {
+		return errFS
+	}
+	sizeInt := fileInfo.Size()
+	size := strconv.Itoa(int(sizeInt))
+	extension := fileInfo.Name()
+	ext := "EXTENSION: "
+	_, after, found := strings.Cut(extension, ".")
+	if found {
+		ext = "EXTENSION: " + after
+	}
+
 	// inform the server we are gonna send a file and recieve a net.Conn to handle that
-	conn, res, errS := obtainConnection("SFTP > 1.0 ACTION: SEND \n SIZE: 12 EXTENSION: txt;", port, domain)
+	conn, res, errS := obtainConnection("SFTP > 1.0 ACTION: SEND SIZE: "+size+" "+ext+";", port, domain)
 	if errS != nil {
 		return errS
 	}
@@ -29,12 +49,6 @@ func SendFile(port string, domain string, channel string, filePath string) error
 		return errors.New(res)
 	}
 	defer conn.Close()
-
-	file, errO := os.Open(filePath)
-	if errO != nil {
-		return errO
-	}
-	defer file.Close()
 
 	writer := bufio.NewWriter(conn)
 	reader := bufio.NewReader(file)
@@ -60,22 +74,21 @@ func SendFile(port string, domain string, channel string, filePath string) error
 			return errF
 		}
 	}
-	fmt.Println("estoy aqui")
 	//here we check that server recieved file correctly
 	message, errMes := utils.ReadMessage(conn)
 	if errMes != nil {
 		print(errMes)
 		return errMes
 	}
-	fmt.Println(message)
+	//here we parse
+	status, errSt := utils.GetKey(message, "STATUS")
+	if errSt != nil {
+		return errSt
+	}
 
-	// status, errSt := getStatus(response)
-	// if errSt != nil {
-	// 	return errSt
-	// }
-	// if status != "OK" {
-	// 	return errors.New(status)
-	// }
+	if status != "OK" {
+		return errors.New(status)
+	}
 
 	return nil
 }
