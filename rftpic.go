@@ -41,7 +41,7 @@ func SendFile(port string, domain string, channel string, filePath string) error
 	}
 
 	// inform the server we are gonna send a file and recieve a net.Conn to handle that
-	conn, res, errS := obtainConnection("SFTP > 1.0 ACTION: SEND SIZE: "+size+" "+ext+";", port, domain)
+	conn, res, errS := obtainConnection("SFTP > 1.0 ACTION: SEND SIZE: "+size+" "+ext+" CHANNEL: "+channel+";", port, domain)
 	if errS != nil {
 		return errS
 	}
