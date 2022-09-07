@@ -2,4 +2,7 @@ module github.com/rojbar/rftpic
 
 go 1.18
 
-require github.com/rojbar/rftpiu v0.0.0-20220825001733-cff1d4eaf04b
+require (
+	github.com/google/uuid v1.3.0
+	github.com/rojbar/rftpiu v0.0.0-20220830011005-2f7ec6a4e35a
+)
