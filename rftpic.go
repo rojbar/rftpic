@@ -47,24 +47,29 @@ func SendFile(port string, domain string, channel string, filePath string) error
 
 	defer conn.Close()
 
-	buffer := make([]byte, BUFFERSIZE)
-	loops := sizeInt / BUFFERSIZE
-	sizeLastRead := sizeInt % BUFFERSIZE
-	lessBuffer := make([]byte, sizeLastRead)
 	writer := bufio.NewWriter(conn)
 
+	buffer := make([]byte, BUFFERSIZE)
+	chunks, sizeLastChunk := utils.CalculateChunksToSendExactly(int(sizeInt), BUFFERSIZE)
+	remainderBuffer := make([]byte, sizeLastChunk)
+
+	loops := chunks
+	if sizeLastChunk != 0 {
+		loops += 1
+	}
+
 	for i := 0; i < int(loops); i++ {
-		errRnWf := utils.ReadThenWrite(file, *writer, buffer)
+		auxBuffer := buffer
+		if i == chunks {
+			auxBuffer = remainderBuffer
+		}
+
+		errRnWf := utils.ReadThenWrite(file, *writer, auxBuffer)
 		if errRnWf != nil {
-			print(errRnWf)
 			return errRnWf
 		}
 	}
-	errRnWf := utils.ReadThenWrite(file, *writer, lessBuffer)
-	if errRnWf != nil {
-		print(errRnWf)
-		return errRnWf
-	}
+
 	//here we check that server recieved the file correctly
 	message, errMes := utils.ReadMessage(conn)
 	if errMes != nil {
@@ -85,6 +90,14 @@ func SendFile(port string, domain string, channel string, filePath string) error
 }
 
 func Subscribe(port string, domain string, channel string) error {
+
+	for i := 0; i < 50; i++ {
+		err := os.MkdirAll("recieve/channels/"+strconv.Itoa(i), 0750)
+		if err != nil && !os.IsExist(err) {
+			return err
+		}
+	}
+
 	// inform the server we want to subscribe to certain channel
 	conn, res, errS := obtainConnection("SFTP > 1.0 ACTION: SUBSCRIBE CHANNEL: "+channel+";", port, domain)
 	if errS != nil {
@@ -93,13 +106,11 @@ func Subscribe(port string, domain string, channel string) error {
 	if res != "OK" {
 		return errors.New(res)
 	}
-	fmt.Println("Subscribed")
 	handleSubscription(conn)
 	return nil
 }
 
 func handleSubscription(conn net.Conn) error {
-	fmt.Println("HANDLING SUBSCRIPTION")
 	defer conn.Close()
 	for {
 		message, errNf := utils.ReadMessage(conn)
@@ -118,54 +129,50 @@ func handleSubscription(conn net.Conn) error {
 		value, errSz := utils.GetKey(message, "SIZE")
 		fileSize, errAtoi := strconv.Atoi(value)
 		if errCN != nil || errSz != nil || errAtoi != nil || fileSize <= 0 {
-			fmt.Println("UPS", errCN, errSz, errAtoi)
+			fmt.Println(errCN, errSz, errAtoi)
 			continue
 		}
 
 		extension, errExt := utils.GetKey(message, "EXTENSION")
 		if errExt != nil {
 			extension = " "
-			fmt.Println("ESTOY AQUI,", errExt)
+			fmt.Println("couldn't find extension", errExt)
 		}
 
 		buffer := make([]byte, BUFFERSIZE)
-		loops := fileSize / BUFFERSIZE
-		sizeLastRead := fileSize % BUFFERSIZE
+		chunks, sizeLastChunk := utils.CalculateChunksToSendExactly(fileSize, BUFFERSIZE)
+		remainderBuffer := make([]byte, sizeLastChunk)
 
-		lessBuffer := make([]byte, sizeLastRead)
+		loops := chunks
+		if sizeLastChunk != 0 {
+			loops += 1
+		}
 
 		file, errC := os.Create("recieve/channels/" + channelName + "/" + uuid.NewString() + "." + extension)
 		if errC != nil {
-			fmt.Println("SADA", errC)
+			fmt.Println("couldn't create file for recieving", errC)
 			continue
 		}
 
-		// here we inform the server all ready for recieving file
 		errI := utils.SendMessage(conn, "SFTP > 1.0 STATUS: OK;")
 		if errI != nil {
-			fmt.Println("este", errI)
+			fmt.Println("coudln't inform server we ok for transfering file", errI)
 		}
 
 		// we recieve the file
 		writer := bufio.NewWriter(file)
-		fmt.Println("DATOS PARA LEER", int(loops), sizeLastRead, fileSize, BUFFERSIZE)
-		for i := 0; i < int(loops); i++ {
-			fmt.Println("loop", i)
-			errRnWf := utils.ReadThenWrite(conn, *writer, buffer)
+		for i := 0; i < loops; i++ {
+			auxbuffer := buffer
+			if i == chunks {
+				auxbuffer = remainderBuffer
+			}
+			errRnWf := utils.ReadThenWrite(conn, *writer, auxbuffer)
 			if errRnWf != nil {
-				fmt.Println("ERROR AQUI, LE", errRnWf)
+				fmt.Println("error when reading from net and writing to file", errRnWf)
 				utils.SendMessage(conn, "SFTP > 1.0 STATUS: NOT OK;")
 				break
 			}
 		}
-		fmt.Println("LEYENDO ULTIMO CHUNK", lessBuffer)
-		errRnWf := utils.ReadThenWrite(conn, *writer, lessBuffer)
-		if errRnWf != nil {
-			fmt.Println("ERROR AQUII LO", errRnWf)
-			utils.SendMessage(conn, "SFTP > 1.0 STATUS: NOT OK;")
-		}
-		fmt.Println("YA LEIMOS EL ULTIMO CHUNK")
-
 		utils.SendMessage(conn, "SFTP > 1.0 STATUS: OK;")
 		file.Close()
 	}
